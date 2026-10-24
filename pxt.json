@@ -1,0 +1,29 @@
+{
+    "name": "microbit-zacarana-vezja-tutorials",
+    "version": "1.0.0",
+    "description": "Slovenski MakeCode bloki in vodeni tutoriali za delavnico Zacarana vezja",
+    "license": "MIT",
+    "dependencies": {
+        "core": "*",
+        "radio": "*",
+        "microphone": "*",
+        "neopixel": "github:microsoft/pxt-neopixel#v0.7.3"
+    },
+    "files": [
+        "main.ts",
+        "api.ts",
+        "runtime.ts",
+        "README.md",
+        "p1.md",
+        "p2.md",
+        "p3.md",
+        "p4.md",
+        "p5.md",
+        "p6.md"
+    ],
+    "public": true,
+    "preferredEditor": "tsprj",
+    "targetVersions": {
+        "target": "microbit"
+    }
+}
