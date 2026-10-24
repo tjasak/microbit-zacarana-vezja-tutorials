@@ -22,8 +22,8 @@
         "p6.md"
     ],
     "public": true,
-    "preferredEditor": "tsprj",
-    "targetVersions": {
-        "target": "microbit"
-    }
+    "preferredEditor": "blocksprj",
+    "supportedTargets": [
+        "microbit"
+    ]
 }
