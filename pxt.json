@@ -1,6 +1,6 @@
 {
     "name": "microbit-zacarana-vezja-tutorials",
-    "version": "1.0.0",
+    "version": "1.1.2",
     "description": "Slovenski MakeCode bloki in vodeni tutoriali za delavnico Zacarana vezja",
     "license": "MIT",
     "dependencies": {
@@ -22,6 +22,7 @@
         "p6.md"
     ],
     "public": true,
+    "disablesVariants": ["mbdal"],
     "preferredEditor": "blocksprj",
     "supportedTargets": [
         "microbit"

@@ -12,22 +12,24 @@ namespace zacaranaRuntime {
     const MAGNET_DELTA = 8
     const MOTION_DELTA = 2
     const MOTION_TARGET_MS = 3000
+    // P5 timing is defined in ARCH.yaml / p5_hisa.hint.
+    const HINT_REPEAT_PAUSE_MS = 1200
 
     let station = Postaja.P1
-    let started = false
     let active = false
     let solved = false
     let party = false
-    let standalone = true
-    let effectEnabled = false
     let solvedHandler: () => void = null
-    let generation = 0
 
     let lightBaseline = 0
     let tiltStep = 0
     let levelSince = -1
     let loudSamples = 0
     let codeStep = 0
+    let hintAt = 0
+    let hintVisible = false
+    let hintErrorUntil = 0
+    let generation = 0
     let magneticBaselineX = 0
     let magneticBaselineY = 0
     let magneticBaselineZ = 0
@@ -59,6 +61,7 @@ namespace zacaranaRuntime {
 
     function clearOutputs(): void {
         music.stopAllSounds()
+        led.enable(true)
         basic.clearScreen()
         if (station == Postaja.P1 || station == Postaja.P3) pins.digitalWritePin(DigitalPin.P0, 0)
         if (ring0 != null) {
@@ -75,13 +78,13 @@ namespace zacaranaRuntime {
         generation += 1
         party = false
         solved = false
-        effectEnabled = false
         tiltStep = 0
         levelSince = -1
         loudSamples = 0
         codeStep = 0
+        hintVisible = false
+        hintErrorUntil = 0
         motionMs = 0
-        standalone = !fromRadio
         active = !fromRadio || station == Postaja.P1
         lightBaseline = input.lightLevel()
         magneticBaselineX = input.magneticForce(Dimension.X)
@@ -100,7 +103,20 @@ namespace zacaranaRuntime {
             if (tiltStep == 0) basic.showArrow(ArrowNames.West, 0)
             else if (tiltStep == 1) basic.showArrow(ArrowNames.East, 0)
             else basic.showLeds(". . . . .\n. . . . .\n# # # # #\n. . . . .\n. . . . .", 0)
+        } else if (station == Postaja.P5) {
+            hintVisible = true
+            hintAt = input.runningTime()
+            updateHouseHint()
         }
+    }
+
+    function updateHouseHint(): void {
+        if (station != Postaja.P5 || !active || solved || party || !hintVisible) return
+        if (input.runningTime() < hintErrorUntil) return
+        let elapsed = (input.runningTime() - hintAt) % (3600 + HINT_REPEAT_PAUSE_MS)
+        if (elapsed >= 3600 || Math.idiv(elapsed, 600) % 2 == 1) basic.clearScreen()
+        else if (Math.idiv(elapsed, 600) == 2) basic.showLeds(". # # # .\n# . . . #\n. . . # .\n. . # . .\n# # # # #", 0)
+        else basic.showLeds(". . # . .\n. # # . .\n. . # . .\n. . # . .\n. # # # .", 0)
     }
 
     function activate(): void {
@@ -108,7 +124,6 @@ namespace zacaranaRuntime {
         active = true
         showInstruction()
         if (station == Postaja.P4) {
-            ensureRings()
             ring0.setBrightness(220)
             ring0.showColor(neopixel.rgb(255, 48, 0))
         }
@@ -119,16 +134,25 @@ namespace zacaranaRuntime {
         if (!active || solved || party) return
         solved = true
         active = false
-        let handler = solvedHandler
-        if (handler != null) handler()
+        let responseGeneration = generation
+        if (solvedHandler != null) solvedHandler()
+        // Finite native block experiments may finish after RESET/PARTY.
+        // Restore the current scene and never retain their stale final screen.
+        if (responseGeneration != generation) {
+            if (party) {
+                basic.showIcon(IconNames.Fabulous, 0)
+            } else {
+                clearOutputs()
+                showInstruction()
+            }
+        }
     }
 
     function sendThree(signal: string): void {
-        let current = generation
         for (let i = 0; i < TX_RETRIES; i++) {
-            if (current != generation || party) return
+            if (!solved || party) return
             radio.sendString(signal)
-            if (i < TX_RETRIES - 1) basic.pause(TX_INTERVAL_MS)
+            basic.pause(TX_INTERVAL_MS)
         }
     }
 
@@ -152,11 +176,8 @@ namespace zacaranaRuntime {
 
     //% blockHidden=true
     export function start(selected: Postaja): void {
-        if (started) return
-        started = true
         station = selected
         radio.setGroup(RADIO_GROUP)
-        music.setBuiltInSpeakerEnabled(true)
         ensureRings()
         resetState(false)
         basic.forever(function () {
@@ -168,16 +189,19 @@ namespace zacaranaRuntime {
 
     //% blockHidden=true
     export function playSound(sound: CarobniZvok): void {
+        if (!solved || party) return
+        let soundGeneration = generation
         let first = 220 + sound * 73
-        let second = sound == CarobniZvok.Skrivnostni ? 165 : first + 147
+        let second = first + 147
         music.playTone(first, 120)
+        if (soundGeneration != generation || party) return
         music.playTone(second, 180)
     }
 
     //% blockHidden=true
     export function runEffect(): void {
-        effectEnabled = true
-        ensureRings()
+        if (!solved || party) return
+        let effectGeneration = generation
         if (station == Postaja.P1) {
             pins.digitalWritePin(DigitalPin.P0, 1)
         } else if (station == Postaja.P2) {
@@ -192,7 +216,7 @@ namespace zacaranaRuntime {
             ring0.showColor(neopixel.rgb(255, 128, 0))
         } else {
             for (let level = 0; level <= 80; level += 2) {
-                if (party) return
+                if (party || effectGeneration != generation) return
                 ring0.setBrightness(level)
                 ring0.showColor(neopixel.rgb(255, 180, 24))
                 basic.pause(125)
@@ -202,10 +226,9 @@ namespace zacaranaRuntime {
 
     //% blockHidden=true
     export function wakeNext(): void {
-        if (!solved) return
-        let signal = nextSignal()
-        if (signal == "PARTY") party = true
-        sendThree(signal)
+        if (!solved || party) return
+        sendThree(nextSignal())
+        if (station == Postaja.P6) party = true
     }
 
     function sampleStation(): void {
@@ -225,6 +248,7 @@ namespace zacaranaRuntime {
         let strength = input.acceleration(Dimension.Strength)
         if (strength <= 0) return
         let normalized = Math.idiv(x * 1000, strength)
+        let previousStep = tiltStep
         if (tiltStep == 0 && normalized < -TILT_RATIO_PERMILLE) {
             tiltStep = 1
             showInstruction()
@@ -240,6 +264,7 @@ namespace zacaranaRuntime {
                 levelSince = -1
             }
         }
+        if (tiltStep != previousStep) music.playTone(261 + tiltStep * 131, 60)
     }
 
     function sampleSound(): void {
@@ -262,43 +287,53 @@ namespace zacaranaRuntime {
     }
 
     function updatePersistentEffect(): void {
+        updateHouseHint()
         if (party) {
+            led.enable(station != Postaja.P5 || Math.idiv(input.runningTime(), 400) % 2 == 0)
             if (station == Postaja.P1 || station == Postaja.P3) pins.digitalWritePin(DigitalPin.P0, 1)
-            if (ring0 != null) {
-                ring0.setBrightness(120)
+            if (ring0 != null && station != Postaja.P5) {
                 ring0.showRainbow(1, 360)
                 ring0.rotate(1)
                 ring0.show()
             }
-        } else if (effectEnabled && station == Postaja.P1) {
+        } else if (solved && station == Postaja.P1) {
+            led.enable(Math.idiv(input.runningTime(), 300) % 2 == 0)
             pins.digitalWritePin(DigitalPin.P0, Math.randomRange(0, 100) < 30 ? 1 : 0)
         }
     }
 
     radio.onReceivedString(function (message) {
-        if (!started) return
         if (message == "RESET") resetState(true)
         else if (message == "PARTY") {
             generation += 1
             party = true
             active = false
-            music.stopAllSounds()
+            if (station == Postaja.P5) {
+                ring0.setBrightness(80)
+                ring0.showColor(neopixel.rgb(255, 128, 0))
+            }
+            basic.showIcon(IconNames.Fabulous)
+        } else if (station == Postaja.P2 && message == "STAR" && solved) {
+            basic.showIcon(IconNames.Happy)
         } else if (message == incomingSignal() && !active && !solved) activate()
     })
 
     input.onButtonPressed(Button.A, function () {
-        if (!started || !active || solved || party) return
+        if (!active || solved || party) return
         if (station == Postaja.P3) complete()
         else if (station == Postaja.P5) acceptCode(1)
-        else if (station == Postaja.P6 && standalone) complete()
+        else if (station == Postaja.P6) complete()
     })
 
     input.onButtonPressed(Button.B, function () {
-        if (!started || !active || solved || party) return
+        if (!active || solved || party) return
         if (station == Postaja.P5) acceptCode(2)
     })
 
     function acceptCode(value: number): void {
+        radio.sendString(value == 1 ? "P5_A_PRESS" : "P5_B_PRESS")
+        if (hintVisible) basic.clearScreen()
+        hintVisible = false
         let expected = codeStep == 1 ? 2 : 1
         if (value == expected) {
             codeStep += 1
@@ -306,7 +341,8 @@ namespace zacaranaRuntime {
             if (codeStep >= 3) complete()
         } else {
             codeStep = 0
-            basic.showIcon(IconNames.No, 300)
+            basic.showIcon(IconNames.No, 0)
+            hintErrorUntil = input.runningTime() + 300
             showInstruction()
         }
     }
